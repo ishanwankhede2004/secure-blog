@@ -1,0 +1,30 @@
+# Render Blueprint: New + > Blueprint, pick this repo, and Render does the rest.
+# The app has zero npm dependencies, so there is nothing to build.
+#
+# Render's free tier wipes local files on every restart and after 15 idle
+# minutes. SEED_DEMO=1 makes the app restore sample posts and an "editor"
+# login whenever it starts with an empty database, and the two passwords below
+# are generated once by Render and stay the same across restarts.
+services:
+  - type: web
+    name: secure-blog
+    runtime: node
+    plan: free
+    buildCommand: echo "no dependencies to install"
+    startCommand: node server.js
+    healthCheckPath: /healthz
+    envVars:
+      - key: NODE_VERSION
+        value: 22.22.0
+      - key: NODE_ENV
+        value: production
+      - key: TRUST_PROXY
+        value: "1"
+      - key: SEED_DEMO
+        value: "1"
+      - key: ADMIN_USERNAME
+        value: admin
+      - key: ADMIN_PASSWORD
+        generateValue: true
+      - key: EDITOR_PASSWORD
+        generateValue: true

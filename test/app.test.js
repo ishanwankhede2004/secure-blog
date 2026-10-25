@@ -15,6 +15,8 @@ async function boot(overrides = {}) {
   const app = createApp({
     dbFile: ':memory:',
     quiet: true,
+    isProd: false, // tests must not depend on the NODE_ENV of whoever runs them
+    cookieSecure: false,
     scryptN: 1024, // fast hashing for tests only
     globalRateMax: 100000,
     loginMaxAttempts: 1000,

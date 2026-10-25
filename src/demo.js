@@ -24,18 +24,64 @@ const DEMO_POSTS = [
   ['Testing the unhappy paths', 'Anyone can test that login works with a correct password. The valuable tests try the wrong password, a forged form, a script in a title and a user opening a page they should not see.\n\nAutomate them so they run on every change.'],
 ];
 
-// Inserts the sample posts, staggered over past days so the archive looks natural.
+// Internship diary: one post per task, dated across the internship
+// (25 May 2026 to 9 July 2026). Written as a factual record of what each task built.
+const INTERNSHIP_START = Date.UTC(2026, 4, 25); // 25 May 2026
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+const DIARY_POSTS = [
+  {
+    day: 0,
+    title: 'Task 1: Setting up the project environment',
+    body: 'The first task was to prepare everything the blog needs before writing any features. I set up a Node.js project with a clear folder layout: src for the application code, public for the stylesheet, scripts for helper tools and test for the automated tests.\n\nThe data lives in a SQLite database, which is a single file and needs no separate database server. The server has a small health page at /healthz so a hosting service can check that the app is running, and the code is kept in a GitHub repository.\n\nWhat I learned: a tidy structure and a working start-up command on day one make every later task easier, because new features have an obvious place to go.',
+  },
+  {
+    day: 11,
+    title: 'Task 2: Search, pagination and a mobile-friendly design',
+    body: 'The second task made the blog usable with lots of posts. Search looks through both titles and post text and ignores capital letters, and special characters such as the percent sign are treated as ordinary text. Pagination shows six posts per page with Previous and Next links and page numbers, and the search word is kept when you move between pages.\n\nFor styling I designed for phones first: one column, large buttons that are easy to tap, readable text and a layout that adapts on wider screens. It also follows the visitor\'s light or dark setting.\n\nWhat I learned: a page that works well on a small screen is usually simpler and faster on every screen.',
+  },
+  {
+    day: 22,
+    title: 'Task 3: Login, roles and creating, editing and deleting posts',
+    body: 'This task added accounts and the full create, read, update and delete cycle for posts. Passwords are never stored as typed: each one is turned into a salted scrypt hash, and login compares hashes. After login the server issues a random session token in a protected cookie, and logging out destroys it.\n\nThere are two roles. Editors can write posts and change or delete only their own. Admins can manage every post and also add users, change roles and reset passwords. There is no public sign-up, so only an admin can create accounts. The server checks the role on every request, because hiding a button is not real security.\n\nWhat I learned: permissions must be enforced on the server, not just in the page.',
+  },
+  {
+    day: 34,
+    title: 'Task 4: Making the blog secure',
+    body: 'The fourth task protected the app against common attacks and bad input. Database queries use prepared statements, so input can never rewrite a query. Everything shown on a page is escaped, so a script typed into a title appears as plain text instead of running. Every form carries a secret token to stop forged requests, and logins are rate limited to slow down password guessing.\n\nThe server also checks the length and format of every field, strips unwanted control characters, sends strict security headers, and shows generic error messages that give nothing away. A set of automated tests tries these attacks on purpose and checks that they fail.\n\nWhat I learned: assume every input is hostile, and test the unhappy paths as carefully as the happy ones.',
+  },
+  {
+    day: 45,
+    title: 'Task 5: Building, testing and going live',
+    body: 'The final task was to build, test and publish the finished project. The automated suite of 20 end-to-end tests covers login, roles, create, edit and delete, search, pagination and the security protections. I also wrote a check script that exercises a running copy of the site.\n\nThe app is hosted on Render straight from the GitHub repository and starts with a single command. The free plan sleeps when nobody visits and clears its database on restart, so the blog restores its sample posts and logins automatically each time it starts.\n\nWhat I learned: a project is only finished when it runs somewhere other than my own computer and I have tested it there.',
+  },
+];
+
+const pad = (n) => String(n).padStart(2, '0');
+function stampFor(dayOffset, hour) {
+  const d = new Date(INTERNSHIP_START + dayOffset * DAY_MS);
+  return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ${pad(hour)}:00:00`;
+}
+
+// Inserts the internship diary plus the sample articles. All 19 posts are dated
+// inside the internship window so the blog reads as one timeline.
 function insertDemoPosts(store, { adminId, editorId }) {
-  const stamp = store.db.prepare(
-    "UPDATE posts SET created_at = datetime('now', ?), updated_at = datetime('now', ?) WHERE id = ?",
-  );
+  const stamp = store.db.prepare('UPDATE posts SET created_at = ?, updated_at = ? WHERE id = ?');
+
+  DIARY_POSTS.forEach(({ title, body, day }) => {
+    const id = store.createPost({ title, body, authorId: adminId });
+    const when = stampFor(day, 10);
+    stamp.run(when, when, id);
+  });
+
   DEMO_POSTS.forEach(([title, body], i) => {
     const authorId = editorId && i % 3 === 0 ? editorId : adminId;
     const id = store.createPost({ title, body, authorId });
-    const offset = `-${(DEMO_POSTS.length - i) * 2} days`;
-    stamp.run(offset, offset, id);
+    const when = stampFor(1 + Math.round((i * 43) / (DEMO_POSTS.length - 1)), 15);
+    stamp.run(when, when, id);
   });
-  return DEMO_POSTS.length;
+
+  return DIARY_POSTS.length + DEMO_POSTS.length;
 }
 
 // Start-up hook for SEED_DEMO=1: only acts on an empty blog, so it can never
@@ -71,4 +117,4 @@ async function seedDemoContent(store, config, log = console.log) {
   return added;
 }
 
-module.exports = { DEMO_POSTS, insertDemoPosts, seedDemoContent };
+module.exports = { DEMO_POSTS, DIARY_POSTS, insertDemoPosts, seedDemoContent };

@@ -15,7 +15,7 @@ A small blog where logged-in users can **create, read, update and delete posts**
 Requires **Node.js 22.13 or newer** (uses the built-in `node:sqlite`). Developed and tested on Node 22.23.
 
 ```bash
-npm run seed     # optional: demo users and 14 sample posts (prints the passwords once)
+npm run seed     # optional: demo users and 19 sample posts (prints the passwords once)
 npm start        # http://localhost:3000
 ```
 
@@ -92,7 +92,7 @@ Runs 38 checks against the real site (start-up, database, login, create/read/upd
 ### Free-tier behaviour (important)
 
 - **Sleeps after 15 minutes without visitors** and takes about a minute to wake. Open the link once before showing it to anyone.
-- **The database is wiped on every restart or redeploy**, because free services have no persistent disk. `SEED_DEMO=1` makes the app restore 14 sample posts and the `editor` account automatically, and the generated passwords stay the same, so the site is never blank. Posts and users you add yourself are lost on restart. For permanent data, use a paid plan with a disk and set `DB_FILE=/var/data/blog.db`.
+- **The database is wiped on every restart or redeploy**, because free services have no persistent disk. `SEED_DEMO=1` makes the app restore 19 sample posts and the `editor` account automatically, and the generated passwords stay the same, so the site is never blank. Posts and users you add yourself are lost on restart. For permanent data, use a paid plan with a disk and set `DB_FILE=/var/data/blog.db`.
 - Run one instance only (rate limits and the database are per instance).
 
 A `Dockerfile` is included for hosts that prefer containers (data lives in the `/data` volume).

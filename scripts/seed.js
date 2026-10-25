@@ -1,6 +1,6 @@
 'use strict';
 // Demo data for screenshots and demo videos:  npm run seed
-// Creates an admin, an editor and 14 sample posts (3 pages at 6 per page).
+// Creates an admin, an editor and 19 sample posts (4 pages at 6 per page).
 // Passwords are random unless DEMO_PASSWORD is set, and are printed once.
 
 const crypto = require('node:crypto');

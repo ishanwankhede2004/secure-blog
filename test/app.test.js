@@ -106,7 +106,9 @@ function rawGet(base, path) {
   });
 }
 
-const countCards = (text) => (text.match(/<li class="card">/g) || []).length;
+// Posts on the page: the featured article (front page only) plus the cards.
+const countCards = (text) =>
+  (text.match(/<li class="card">/g) || []).length + (text.match(/<section class="featured"/g) || []).length;
 
 // ------------------------------------------------------------------------ 1
 test('passwords are stored as salted scrypt hashes, never plain text', async () => {
@@ -336,8 +338,8 @@ test('pagination: page size, clamping and bad page values', async () => {
     const p1 = await c.req('/');
     assert.equal(countCards(p1.text), 6);
     assert.match(p1.text, /Page 1 of 3/);
-    assert.match(p1.text, /15 posts/);
-    assert.match(p1.text, /href="\/\?page=2"/);
+    assert.match(p1.text, /15 articles/);
+    assert.match(p1.text, /href="\/\?page=2#latest"/);
 
     assert.equal(countCards((await c.req('/?page=2')).text), 6);
     const p3 = await c.req('/?page=3');
@@ -366,8 +368,8 @@ test('search: matches title and body, ignores case, keeps the query across pages
 
     const byTitle = await c.req('/?q=GARDENING');
     assert.equal(countCards(byTitle.text), 6);
-    assert.match(byTitle.text, /8 posts matching “GARDENING”/);
-    assert.match(byTitle.text, /href="\/\?q=GARDENING&amp;page=2"/);
+    assert.match(byTitle.text, /8 articles matching “GARDENING”/);
+    assert.match(byTitle.text, /href="\/\?q=GARDENING&amp;page=2#latest"/);
     assert.equal(countCards((await c.req('/?q=GARDENING&page=2')).text), 2);
 
     assert.match((await c.req('/?q=zeppelin')).text, /Totally unrelated/);
@@ -376,10 +378,10 @@ test('search: matches title and body, ignores case, keeps the query across pages
     const pct = await c.req(`/?q=${encodeURIComponent('%')}`);
     assert.equal(countCards(pct.text), 1);
     assert.match(pct.text, /100% sure/);
-    assert.match((await c.req(`/?q=${encodeURIComponent('_')}`)).text, /0 posts matching/);
+    assert.match((await c.req(`/?q=${encodeURIComponent('_')}`)).text, /0 articles matching/);
 
     const none = await c.req('/?q=doesnotexist');
-    assert.match(none.text, /No posts match your search/);
+    assert.match(none.text, /No articles match that search/);
   } finally { await ctx.close(); }
 });
 
@@ -419,7 +421,7 @@ test('XSS: scripts in titles, bodies and search terms are shown as text', async 
 
     const reflected = await c.req(`/?q=${encodeURIComponent('"><svg onload=alert(1)>')}`);
     assert.ok(!reflected.text.includes('<svg onload'));
-    assert.ok(!reflected.text.includes('"><svg'));
+    assert.ok(!reflected.text.includes('"><svg onload'));
 
     const login = await new Client(ctx.base).login('"><script>x</script>', 'whatever-123');
     assert.ok(!login.text.includes('<script>x</script>'));
@@ -435,7 +437,7 @@ test('SQL injection attempts are treated as plain text', async () => {
     for (const q of ["' OR '1'='1", "'; DROP TABLE posts;--", "%' UNION SELECT username, password_hash FROM users--"]) {
       const r = await c.req(`/?q=${encodeURIComponent(q)}`);
       assert.equal(r.status, 200);
-      assert.match(r.text, /0 posts matching/);
+      assert.match(r.text, /0 articles matching/);
       assert.ok(!r.text.includes('scrypt$'));
     }
     assert.equal(ctx.app.store.countPosts(''), 1, 'posts table must be intact');
@@ -583,6 +585,172 @@ test('errors are generic: 404 pages leak nothing', async () => {
     const r = await new Client(ctx.base).req('/definitely-missing');
     assert.equal(r.status, 404);
     assert.match(r.text, /Page not found/);
-    assert.ok(!/node_modules|\.js:\d+|at \w+/.test(r.text));
+    assert.ok(!/node_modules|\.js:\d+|\n\s+at \S+ \(/.test(r.text), 'no stack trace or file paths');
+  } finally { await ctx.close(); }
+});
+
+// ------------------------------------------------------------- INKWELL --
+
+test('categories: filter, combine with search, ignore unknown values, validate on save', async () => {
+  const ctx = await boot();
+  try {
+    const { store } = ctx.app;
+    store.createPost({ title: 'Hashing notes', body: 'About password hashing.', category: 'Security', authorId: ctx.ids.admin });
+    store.createPost({ title: 'Layout notes', body: 'About password forms.', category: 'Web Development', authorId: ctx.ids.admin });
+    store.createPost({ title: 'A loose idea', body: 'Something else entirely.', authorId: ctx.ids.admin });
+    const c = new Client(ctx.base);
+
+    const sec = await c.req(`/?category=${encodeURIComponent('Security')}`);
+    assert.equal(countCards(sec.text), 1);
+    assert.match(sec.text, /1 article in Security/);
+    assert.match(sec.text, /Hashing notes/);
+    assert.ok(!sec.text.includes('Layout notes'));
+
+    const both = await c.req(`/?category=${encodeURIComponent('Web Development')}&q=password`);
+    assert.equal(countCards(both.text), 1);
+    assert.match(both.text, /Layout notes/);
+
+    // unknown category names are ignored, never passed to the database as filters
+    const odd = await c.req(`/?category=${encodeURIComponent("x' OR '1'='1")}`);
+    assert.equal(odd.status, 200);
+    assert.equal(countCards(odd.text), 3);
+
+    const ed = await loggedIn(ctx, 'erin');
+    const bad = await ed.post('/posts', { title: 'Valid title', body: 'A valid body text.', category: 'Nonsense' });
+    assert.equal(bad.status, 422);
+    assert.match(bad.text, /Choose one of the listed categories/);
+    const ok = await ed.post('/posts', { title: 'Valid title', body: 'A valid body text.', category: 'Security' });
+    assert.equal(ok.status, 303);
+    const none = await ed.post('/posts', { title: 'No category', body: 'A valid body text.' });
+    assert.equal(none.status, 303, 'a missing category falls back to the default');
+    assert.equal(store.getPost(Number(none.location.split('/').pop())).category, 'Ideas');
+  } finally { await ctx.close(); }
+});
+
+test('migration: an old database gains a category column and keeps every post', async () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const { DatabaseSync } = require('node:sqlite');
+  const { createStore } = require('../src/db');
+
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'inkwell-mig-'));
+  const file = path.join(dir, 'old.db');
+  const old = new DatabaseSync(file);
+  old.exec(`
+    CREATE TABLE users (id INTEGER PRIMARY KEY AUTOINCREMENT, username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+      password_hash TEXT NOT NULL, role TEXT NOT NULL CHECK (role IN ('admin','editor')),
+      created_at TEXT NOT NULL DEFAULT (datetime('now')));
+    CREATE TABLE posts (id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL, body TEXT NOT NULL,
+      author_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      created_at TEXT NOT NULL DEFAULT (datetime('now')), updated_at TEXT NOT NULL DEFAULT (datetime('now')));
+    INSERT INTO users (username, password_hash, role) VALUES ('alice', 'hash-kept', 'admin');
+    INSERT INTO posts (title, body, author_id) VALUES ('Task 1: Setting up', 'Old diary body.', 1);
+    INSERT INTO posts (title, body, author_id) VALUES ('An older article', 'Old body text.', 1);
+  `);
+  old.close();
+
+  try {
+    for (let run = 0; run < 2; run += 1) { // second run proves the migration is idempotent
+      const store = createStore(file);
+      assert.equal(store.countPosts(''), 2, 'no post is lost');
+      assert.equal(store.getUserByUsername('alice').password_hash, 'hash-kept', 'accounts are untouched');
+      assert.equal(store.getPost(1).category, 'Internship Diary');
+      assert.equal(store.getPost(2).category, 'Ideas');
+      assert.equal(store.getPost(2).body, 'Old body text.', 'article text is untouched');
+      store.close();
+    }
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('article formatting: headings, quotes, lists and links work; nothing dangerous gets through', async () => {
+  const ctx = await boot();
+  try {
+    const body = [
+      'An opening paragraph.',
+      '## First heading', '## Second heading', '## Third heading',
+      '> A wise quotation',
+      '- one\n- two',
+      'Safe [link](https://example.com/a?x=1&y=2) and unsafe [bad](javascript:alert(1)) and [<b>x</b>](https://example.com).',
+      '**bold** and *italic*',
+    ].join('\n\n');
+    const id = ctx.app.store.createPost({ title: 'Formatting', body, authorId: ctx.ids.admin });
+    const r = await new Client(ctx.base).req(`/posts/${id}`);
+    assert.match(r.text, /<h2 id="first-heading-1">First heading<\/h2>/);
+    assert.match(r.text, /<blockquote><p>A wise quotation<\/p><\/blockquote>/);
+    assert.match(r.text, /<ul><li>one<\/li><li>two<\/li><\/ul>/);
+    assert.match(r.text, /<a href="https:\/\/example\.com\/a\?x=1&amp;y=2" rel="noopener noreferrer nofollow" target="_blank">link<\/a>/);
+    assert.match(r.text, /<strong>bold<\/strong> and <em>italic<\/em>/);
+    assert.match(r.text, /class="toc"/, 'a table of contents appears for three or more headings');
+    assert.ok(!/href="javascript:/i.test(r.text), 'javascript: links are never made');
+    assert.ok(!r.text.includes('<b>x</b>'), 'markup inside a link label is escaped');
+    assert.match(r.text, /name="description" content="/);
+    assert.match(r.text, /min read/);
+  } finally { await ctx.close(); }
+});
+
+test('preview: shows the article without publishing, and respects permissions', async () => {
+  const ctx = await boot();
+  try {
+    const { store } = ctx.app;
+    const evansPost = store.createPost({ title: 'Evan wrote this', body: 'Evan body text here.', authorId: ctx.ids.editor2 });
+    const before = store.countPosts('');
+
+    const visitor = new Client(ctx.base);
+    const anon = await visitor.req('/posts/preview', { method: 'POST', form: { title: 'x', body: 'y' } });
+    assert.ok([303, 403].includes(anon.status), 'visitors cannot preview');
+
+    const c = await loggedIn(ctx, 'erin');
+    const pv = await c.post('/posts/preview', { title: 'Draft title', body: '## Hello\n\nSome draft text for preview.', category: 'Ideas' });
+    assert.equal(pv.status, 200);
+    assert.match(pv.text, /Preview only/);
+    assert.match(pv.text, /<h2 id="hello-1">Hello<\/h2>/);
+    assert.equal(store.countPosts(''), before, 'a preview never creates a post');
+
+    const invalid = await c.post('/posts/preview', { title: 'x', body: 'y' });
+    assert.equal(invalid.status, 422);
+
+    const back = await c.post('/posts/preview', { title: 'Draft title', body: 'Some draft text for preview.', category: 'Ideas', _action: 'edit' });
+    assert.equal(back.status, 200);
+    assert.match(back.text, /Write an article/);
+    assert.ok(!/Preview only/.test(back.text));
+
+    const stolen = await c.post('/posts/preview', { post_id: String(evansPost), title: 'Draft title', body: 'Some draft text for preview.' });
+    assert.equal(stolen.status, 403, "an editor cannot open a preview that targets another editor's article");
+
+    const bad = await c.post('/posts/preview', { post_id: '1 OR 1=1', title: 'Draft title', body: 'Some draft text for preview.' });
+    assert.equal(bad.status, 400);
+  } finally { await ctx.close(); }
+});
+
+test('covers, About page, related articles and the custom 404', async () => {
+  const ctx = await boot();
+  try {
+    const { store } = ctx.app;
+    const a = store.createPost({ title: 'SECRET-TITLE-ONE', body: 'First article body.', category: 'Security', authorId: ctx.ids.admin });
+    store.createPost({ title: 'Second security piece', body: 'Second article body.', category: 'Security', authorId: ctx.ids.admin });
+    store.createPost({ title: 'Third piece', body: 'Third article body.', category: 'Ideas', authorId: ctx.ids.admin });
+    const c = new Client(ctx.base);
+
+    const cover = await c.req(`/covers/${a}.svg`);
+    assert.equal(cover.status, 200);
+    assert.match(cover.headers.get('content-type'), /image\/svg\+xml/);
+    assert.ok(!cover.text.includes('SECRET-TITLE-ONE'), 'cover art never contains user text');
+    assert.equal(cover.text, (await c.req(`/covers/${a}.svg`)).text, 'the same post always gets the same picture');
+    assert.equal((await c.req('/covers/99999.svg')).status, 404);
+
+    const about = await c.req('/about');
+    assert.equal(about.status, 200);
+    assert.match(about.text, /About/);
+
+    const page = await c.req(`/posts/${a}`);
+    assert.match(page.text, /Keep reading/);
+    assert.match(page.text, /Second security piece/);
+    assert.ok(!/<li class="card">[\s\S]*SECRET-TITLE-ONE[\s\S]*<\/li>/.test(page.text.split('Keep reading')[1] || ''), 'an article is not related to itself');
+
+    const nf = await c.req('/no/such/page');
+    assert.equal(nf.status, 404);
+    assert.match(nf.text, /role="search"/, 'the 404 page offers search');
+    assert.match(nf.text, /Back to the front page/);
   } finally { await ctx.close(); }
 });

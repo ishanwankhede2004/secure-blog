@@ -9,6 +9,8 @@ const { DatabaseSync } = require('node:sqlite');
 const { newToken, sha256 } = require('./security');
 const { escapeLike } = require('./validate');
 
+const POST_COLUMNS = 'p.id, p.title, p.body, p.category, p.author_id, p.created_at, p.updated_at, u.username AS author';
+
 function createStore(file) {
   if (file !== ':memory:') fs.mkdirSync(path.dirname(file), { recursive: true });
   const db = new DatabaseSync(file);
@@ -46,6 +48,18 @@ function createStore(file) {
     CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions (user_id);
   `);
 
+  // ---- migration: posts.category (additive only; never drops or rewrites data) ----
+  // Older databases have no category column. It is added with a default so every
+  // existing post keeps working, and the internship diary posts are labelled once.
+  const postColumns = db.prepare('PRAGMA table_info(posts)').all().map((c) => c.name);
+  if (!postColumns.includes('category')) {
+    db.exec(`
+      ALTER TABLE posts ADD COLUMN category TEXT NOT NULL DEFAULT 'Ideas';
+      UPDATE posts SET category = 'Internship Diary' WHERE title LIKE 'Task _: %';
+    `);
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_posts_category ON posts (category, created_at DESC)');
+
   const sql = {
     userByName: db.prepare('SELECT * FROM users WHERE username = ?'),
     userById: db.prepare('SELECT * FROM users WHERE id = ?'),
@@ -58,24 +72,17 @@ function createStore(file) {
     userDelete: db.prepare('DELETE FROM users WHERE id = ?'),
     reassignPosts: db.prepare('UPDATE posts SET author_id = ? WHERE author_id = ?'),
 
-    postCount: db.prepare('SELECT COUNT(*) AS n FROM posts'),
-    postCountSearch: db.prepare(
-      "SELECT COUNT(*) AS n FROM posts WHERE title LIKE ? ESCAPE '\\' OR body LIKE ? ESCAPE '\\'",
-    ),
-    postList: db.prepare(`
-      SELECT p.id, p.title, p.body, p.author_id, p.created_at, p.updated_at, u.username AS author
+    categoryCounts: db.prepare('SELECT category, COUNT(*) AS n FROM posts GROUP BY category'),
+    postRelated: db.prepare(`
+      SELECT p.id, p.title, p.body, p.category, p.author_id, p.created_at, p.updated_at, u.username AS author
       FROM posts p JOIN users u ON u.id = p.author_id
-      ORDER BY p.created_at DESC, p.id DESC LIMIT ? OFFSET ?`),
-    postSearch: db.prepare(`
-      SELECT p.id, p.title, p.body, p.author_id, p.created_at, p.updated_at, u.username AS author
-      FROM posts p JOIN users u ON u.id = p.author_id
-      WHERE p.title LIKE ? ESCAPE '\\' OR p.body LIKE ? ESCAPE '\\'
-      ORDER BY p.created_at DESC, p.id DESC LIMIT ? OFFSET ?`),
+      WHERE p.id != ?
+      ORDER BY (p.category = ?) DESC, p.created_at DESC, p.id DESC LIMIT ?`),
     postGet: db.prepare(`
-      SELECT p.id, p.title, p.body, p.author_id, p.created_at, p.updated_at, u.username AS author
+      SELECT p.id, p.title, p.body, p.category, p.author_id, p.created_at, p.updated_at, u.username AS author
       FROM posts p JOIN users u ON u.id = p.author_id WHERE p.id = ?`),
-    postInsert: db.prepare('INSERT INTO posts (title, body, author_id) VALUES (?, ?, ?)'),
-    postUpdate: db.prepare("UPDATE posts SET title = ?, body = ?, updated_at = datetime('now') WHERE id = ?"),
+    postInsert: db.prepare('INSERT INTO posts (title, body, category, author_id) VALUES (?, ?, ?, ?)'),
+    postUpdate: db.prepare("UPDATE posts SET title = ?, body = ?, category = ?, updated_at = datetime('now') WHERE id = ?"),
     postDelete: db.prepare('DELETE FROM posts WHERE id = ?'),
 
     sessionInsert: db.prepare(
@@ -107,6 +114,31 @@ function createStore(file) {
 
   const likeParam = (q) => `%${escapeLike(q)}%`;
 
+  // Listing and counting share one WHERE clause built from fixed fragments only.
+  // User input always travels as a bound parameter, never inside the SQL text.
+  const cache = new Map();
+  function filtered(kind, hasQ, hasCategory) {
+    const key = `${kind}:${hasQ}:${hasCategory}`;
+    if (!cache.has(key)) {
+      const where = [];
+      if (hasQ) where.push("(p.title LIKE ? ESCAPE '\\' OR p.body LIKE ? ESCAPE '\\')");
+      if (hasCategory) where.push('p.category = ?');
+      const clause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+      cache.set(key, db.prepare(kind === 'count'
+        ? `SELECT COUNT(*) AS n FROM posts p ${clause}`
+        : `SELECT ${POST_COLUMNS}
+           FROM posts p JOIN users u ON u.id = p.author_id ${clause}
+           ORDER BY p.created_at DESC, p.id DESC LIMIT ? OFFSET ?`));
+    }
+    return cache.get(key);
+  }
+  const filterArgs = (q, category) => {
+    const args = [];
+    if (q) { const like = likeParam(q); args.push(like, like); }
+    if (category) args.push(category);
+    return args;
+  };
+
   return {
     db,
     close: () => db.close(),
@@ -129,20 +161,19 @@ function createStore(file) {
       }),
 
     // ---- posts ----
-    countPosts: (q) => {
-      if (!q) return sql.postCount.get().n;
-      const like = likeParam(q);
-      return sql.postCountSearch.get(like, like).n;
-    },
-    listPosts: ({ q, limit, offset }) => {
-      if (!q) return sql.postList.all(limit, offset);
-      const like = likeParam(q);
-      return sql.postSearch.all(like, like, limit, offset);
-    },
+    countPosts: (q, category) =>
+      filtered('count', Boolean(q), Boolean(category)).get(...filterArgs(q, category)).n,
+    listPosts: ({ q, category, limit, offset }) =>
+      filtered('list', Boolean(q), Boolean(category)).all(...filterArgs(q, category), limit, offset),
+    categoryCounts: () => Object.fromEntries(sql.categoryCounts.all().map((r) => [r.category, r.n])),
+    relatedPosts: (id, category, limit = 3) => sql.postRelated.all(id, category, limit),
     getPost: (id) => sql.postGet.get(id),
-    createPost: ({ title, body, authorId }) =>
-      Number(sql.postInsert.run(title, body, authorId).lastInsertRowid),
-    updatePost: (id, { title, body }) => sql.postUpdate.run(title, body, id),
+    createPost: ({ title, body, category = 'Ideas', authorId }) =>
+      Number(sql.postInsert.run(title, body, category, authorId).lastInsertRowid),
+    updatePost: (id, { title, body, category }) => {
+      const current = sql.postGet.get(id);
+      return sql.postUpdate.run(title, body, category || (current && current.category) || 'Ideas', id);
+    },
     deletePost: (id) => sql.postDelete.run(id),
 
     // ---- sessions (only a SHA-256 of the token is stored, never the token) ----

@@ -102,7 +102,13 @@ A `Dockerfile` is included for hosts that prefer containers (data lives in the `
 - Rate limiting is in memory, so it resets on restart and is per instance.
 - No email, so password resets are done by an admin.
 - `node:sqlite` is still marked experimental by Node.js (it prints a one-line warning at startup). It is stable enough for this app; pin the Node version in production.
-- Posts are plain text (no Markdown or HTML) by design: it removes a whole class of XSS bugs.
+- Posts are plain text plus a tiny safe set of markers (`## heading`, `> quote`, `- list`, `**bold**`, `*italic*`, `[text](https://link)`). Text is escaped first, so raw HTML is never accepted and only `http(s)` links are made.
+- No drafts, no image uploads and no theme toggle: drafts need a visibility model, uploads need persistent storage (Render's free disk is wiped), and a toggle needs JavaScript, which the strict Content-Security-Policy forbids. Cover art is generated from each post's id and category. Dark mode follows the visitor's system setting.
+- No newsletter: there is no email provider configured.
+
+## Inkwell design upgrade
+
+Categories (`Security`, `Web Development`, `Internship Diary`, `Ideas`) are stored in an additive `posts.category` column. Older databases are migrated automatically at start-up: nothing is dropped or rewritten, existing posts get `Ideas` (diary posts titled `Task N: ...` get `Internship Diary`), and running it twice changes nothing.
 
 ## Project layout
 

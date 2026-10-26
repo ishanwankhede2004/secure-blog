@@ -24,6 +24,17 @@ const DEMO_POSTS = [
   ['Testing the unhappy paths', 'Anyone can test that login works with a correct password. The valuable tests try the wrong password, a forged form, a script in a title and a user opening a page they should not see.\n\nAutomate them so they run on every change.'],
 ];
 
+// Topic for each sample article; anything not listed is filed under Security.
+const DEMO_CATEGORY = {
+  'Roles: admins and editors': 'Web Development',
+  'Pagination keeps pages fast': 'Web Development',
+  'Designing for small screens first': 'Web Development',
+  'Validating input on the server': 'Web Development',
+  'Testing the unhappy paths': 'Ideas',
+  'Backups are part of security': 'Ideas',
+  'Why error messages stay vague': 'Ideas',
+};
+
 // Internship diary: one post per task, dated across the internship
 // (25 May 2026 to 9 July 2026). Written as a factual record of what each task built.
 const INTERNSHIP_START = Date.UTC(2026, 4, 25); // 25 May 2026
@@ -69,14 +80,14 @@ function insertDemoPosts(store, { adminId, editorId }) {
   const stamp = store.db.prepare('UPDATE posts SET created_at = ?, updated_at = ? WHERE id = ?');
 
   DIARY_POSTS.forEach(({ title, body, day }) => {
-    const id = store.createPost({ title, body, authorId: adminId });
+    const id = store.createPost({ title, body, category: 'Internship Diary', authorId: adminId });
     const when = stampFor(day, 10);
     stamp.run(when, when, id);
   });
 
   DEMO_POSTS.forEach(([title, body], i) => {
     const authorId = editorId && i % 3 === 0 ? editorId : adminId;
-    const id = store.createPost({ title, body, authorId });
+    const id = store.createPost({ title, body, category: DEMO_CATEGORY[title] || 'Security', authorId });
     const when = stampFor(1 + Math.round((i * 43) / (DEMO_POSTS.length - 1)), 15);
     stamp.run(when, when, id);
   });

@@ -75,7 +75,9 @@ async function waitUntilAwake() {
   }
 }
 
-const countCards = (text) => (text.match(/<li class="card">/g) || []).length;
+// Posts on a page: the featured article (front page only) plus the cards.
+const countCards = (text) =>
+  (text.match(/<li class="card">/g) || []).length + (text.match(/<section class="featured"/g) || []).length;
 const postId = (location) => (location || '').split('/').pop();
 
 async function main() {
@@ -102,8 +104,19 @@ async function main() {
   const css = await visitor.req('/static/style.css');
   check('stylesheet loads', css.status === 200 && /@media/.test(css.text));
 
+  // ---- INKWELL: pages, topics, generated covers
+  const about = await visitor.req('/about');
+  check('About page loads', about.status === 200 && /About/.test(about.text));
+  const topic = await visitor.req('/?category=Security');
+  check('category filter works', topic.status === 200 && /in Security/.test(topic.text));
+  const coverId = (home.text.match(/\/covers\/(\d+)\.svg/) || [])[1];
+  const cover = coverId ? await visitor.req(`/covers/${coverId}.svg`) : { status: 0, headers: new Headers() };
+  check('cover art is served', cover.status === 200 && /image\/svg\+xml/.test(cover.headers.get('content-type') || ''));
+  const missing = await visitor.req('/no-such-page');
+  check('custom 404 page has search', missing.status === 404 && /role="search"/.test(missing.text));
+
   // ---- pagination
-  const totalMatch = home.text.match(/(\d+) posts?<\/p>/);
+  const totalMatch = home.text.match(/(\d+) articles?\s*<\/p>/);
   const total = totalMatch ? Number(totalMatch[1]) : 0;
   check('database works: posts are listed', total > 0 && countCards(home.text) > 0, `found ${total} posts`);
   check('page 1 shows at most 6 posts', countCards(home.text) <= 6 && countCards(home.text) > 0);
@@ -123,9 +136,9 @@ async function main() {
     check(`search finds "${word}"`, s.status === 200 && countCards(s.text) > 0);
   }
   const none = await visitor.req(`/?q=${TAG}nothingmatchesthis`);
-  check('search with no match says so', /No posts match/.test(none.text));
+  check('search with no match says so', /No articles match/.test(none.text));
   const sqli = await visitor.req(`/?q=${encodeURIComponent("' OR '1'='1")}`);
-  check('SQL-injection style search is harmless', sqli.status === 200 && /0 posts matching/.test(sqli.text));
+  check('SQL-injection style search is harmless', sqli.status === 200 && /0 articles matching/.test(sqli.text));
 
   // ---- visitor restrictions
   const gate = await visitor.req('/posts/new');

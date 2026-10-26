@@ -18,6 +18,10 @@ const LIMITS = {
 
 const ROLES = ['admin', 'editor'];
 
+// Fixed list: a category can only ever be one of these, so it is safe in URLs and SQL.
+const CATEGORIES = ['Security', 'Web Development', 'Internship Diary', 'Ideas'];
+const DEFAULT_CATEGORY = 'Ideas';
+
 const COMMON_PASSWORDS = new Set([
   'password123', 'password1234', '1234567890', '12345678910', 'qwertyuiop',
   'iloveyou123', 'admin12345', 'letmein1234', 'welcome1234', 'changeme123',
@@ -49,6 +53,11 @@ function validatePost(input) {
   const body = cleanText(input.body);
   const errors = {};
 
+  // A missing category falls back to the default; a present but unknown one is an error.
+  const rawCategory = typeof input.category === 'string' ? input.category : '';
+  const category = rawCategory === '' ? DEFAULT_CATEGORY : rawCategory;
+  if (!CATEGORIES.includes(category)) errors.category = 'Choose one of the listed categories.';
+
   if (title.length < LIMITS.titleMin) {
     errors.title = `Title must be at least ${LIMITS.titleMin} characters.`;
   } else if (title.length > LIMITS.titleMax) {
@@ -62,7 +71,7 @@ function validatePost(input) {
   }
 
   return {
-    values: { title, body },
+    values: { title, body, category: CATEGORIES.includes(category) ? category : DEFAULT_CATEGORY },
     errors: Object.keys(errors).length ? errors : null,
   };
 }
@@ -109,6 +118,11 @@ function parsePage(input) {
   return Math.min(n, 100000);
 }
 
+// A category filter from the query string: only an exact known name is accepted.
+function parseCategory(input) {
+  return typeof input === 'string' && CATEGORIES.includes(input) ? input : '';
+}
+
 function parseQuery(input) {
   return cleanLine(typeof input === 'string' ? input : '', LIMITS.searchMax);
 }
@@ -119,6 +133,8 @@ const escapeLike = (s) => s.replace(/[\\%_]/g, '\\$&');
 module.exports = {
   LIMITS,
   ROLES,
+  CATEGORIES,
+  DEFAULT_CATEGORY,
   cleanLine,
   cleanText,
   validatePost,
@@ -127,5 +143,6 @@ module.exports = {
   validateRole,
   parsePage,
   parseQuery,
+  parseCategory,
   escapeLike,
 };

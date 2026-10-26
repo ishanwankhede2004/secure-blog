@@ -9,6 +9,8 @@ const { createStore } = require('./db');
 const sec = require('./security');
 const v = require('./validate');
 const views = require('./views');
+const { coverSvg } = require('./cover');
+const { plainExcerpt } = require('./content');
 
 class HttpError extends Error {
   constructor(status, message) {
@@ -18,8 +20,8 @@ class HttpError extends Error {
 }
 
 const FAVICON = Buffer.from(
-  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#b2441c"/>' +
-  '<path d="M44 14 26 38l-3 11 11-4 18-24z" fill="#fff"/></svg>',
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="12" fill="#14161c"/>' +
+  '<path d="M14 52l6-17L44 11a5.5 5.5 0 018 8L28 44z" fill="#c9a96a"/><path d="M20 35l9 9" stroke="#14161c" stroke-width="3"/></svg>',
 );
 
 // ---------------------------------------------------------------- helpers --
@@ -127,7 +129,7 @@ function createApp(overrides = {}) {
     res.end(payload);
   }
 
-  function render(ctx, status, main, title) {
+  function render(ctx, status, main, title, extra = {}) {
     const flash = ctx.session ? store.takeFlash(ctx.session.token_hash) : null;
     const page = views.layout({
       siteName: config.siteName,
@@ -136,6 +138,7 @@ function createApp(overrides = {}) {
       flash,
       title,
       main,
+      ...extra,
     });
     send(ctx, status, page.value, 'text/html; charset=utf-8', { 'Cache-Control': 'no-store' });
   }
@@ -188,17 +191,39 @@ function createApp(overrides = {}) {
   // ---- public: reading, searching, paging
   add('GET', /^\/$/, 'public', (ctx) => {
     const q = v.parseQuery(ctx.url.searchParams.get('q'));
-    const total = store.countPosts(q);
+    const category = v.parseCategory(ctx.url.searchParams.get('category'));
+    const total = store.countPosts(q, category);
     const pages = Math.max(1, Math.ceil(total / config.pageSize));
     const page = Math.min(v.parsePage(ctx.url.searchParams.get('page')), pages);
-    const posts = store.listPosts({ q, limit: config.pageSize, offset: (page - 1) * config.pageSize });
-    render(ctx, 200, views.home({ posts, q, page, pages, total }), q ? 'Search' : undefined);
+    const posts = store.listPosts({ q, category, limit: config.pageSize, offset: (page - 1) * config.pageSize });
+    const title = q ? 'Search' : category || undefined;
+    render(ctx, 200, views.home({
+      posts, q, category, page, pages, total, counts: store.categoryCounts(), siteName: config.siteName,
+    }), title);
   });
 
   add('GET', /^\/posts\/(\d{1,9})$/, 'public', (ctx, [id]) => {
     const post = store.getPost(Number(id));
-    if (!post) throw new HttpError(404, 'That post does not exist.');
-    render(ctx, 200, views.postPage({ post, canModify: canModify(ctx.user, post) }), post.title);
+    if (!post) throw new HttpError(404, 'That article does not exist.');
+    const related = store.relatedPosts(post.id, post.category, 3);
+    render(ctx, 200, views.postPage({ post, canModify: canModify(ctx.user, post), related }), post.title, {
+      description: plainExcerpt(post.body, 160),
+      ogType: 'article',
+      progress: true,
+    });
+  });
+
+  // Generated cover art: no upload, no storage, nothing to lose when the disk is wiped.
+  add('GET', /^\/covers\/(\d{1,9})\.svg$/, 'public', (ctx, [id]) => {
+    const post = store.getPost(Number(id));
+    if (!post) throw new HttpError(404, 'Page not found.');
+    send(ctx, 200, coverSvg(post.id, post.category), 'image/svg+xml', { 'Cache-Control': 'public, max-age=86400' });
+  });
+
+  add('GET', /^\/about$/, 'public', (ctx) => {
+    render(ctx, 200, views.about({ siteName: config.siteName }), 'About', {
+      description: `About ${config.siteName}, an independent publication on building software that stays secure.`,
+    });
   });
 
   // ---- auth
@@ -242,16 +267,38 @@ function createApp(overrides = {}) {
 
   // ---- posts: write (admin and editor)
   add('GET', /^\/posts\/new$/, 'user', (ctx) => {
-    render(ctx, 200, views.postForm({ mode: 'new', values: { title: '', body: '' }, csrf: ctx.session.csrf }), 'New post');
+    render(ctx, 200, views.postForm({ mode: 'new', values: { title: '', body: '', category: v.DEFAULT_CATEGORY }, csrf: ctx.session.csrf }), 'New article');
   });
 
   add('POST', /^\/posts$/, 'user', (ctx) => {
     const { values, errors } = v.validatePost(ctx.form);
     if (errors) {
-      return render(ctx, 422, views.postForm({ mode: 'new', values, errors, csrf: ctx.session.csrf }), 'New post');
+      return render(ctx, 422, views.postForm({ mode: 'new', values, errors, csrf: ctx.session.csrf }), 'New article');
     }
-    const id = store.createPost({ title: values.title, body: values.body, authorId: ctx.user.id });
-    return flashRedirect(ctx, `/posts/${id}`, 'ok', 'Post published.');
+    const id = store.createPost({
+      title: values.title, body: values.body, category: values.category, authorId: ctx.user.id,
+    });
+    return flashRedirect(ctx, `/posts/${id}`, 'ok', 'Article published.');
+  });
+
+  // Preview: validates like a real save, shows the finished article, publishes nothing.
+  add('POST', /^\/posts\/preview$/, 'user', (ctx) => {
+    let post = null;
+    const rawId = typeof ctx.form.post_id === 'string' ? ctx.form.post_id : '';
+    if (rawId !== '') {
+      if (!/^\d{1,9}$/.test(rawId)) throw new HttpError(400, 'Bad request.');
+      post = ownedPost(ctx, rawId); // editing someone else's article is refused here too
+    }
+    const mode = post ? 'edit' : 'new';
+    const { values, errors } = v.validatePost(ctx.form);
+    const title = post ? 'Edit article' : 'New article';
+    if (errors) {
+      return render(ctx, 422, views.postForm({ mode, post, values, errors, csrf: ctx.session.csrf }), title);
+    }
+    if (ctx.form._action === 'edit') {
+      return render(ctx, 200, views.postForm({ mode, post, values, csrf: ctx.session.csrf }), title);
+    }
+    return render(ctx, 200, views.previewPage({ mode, post, values, user: ctx.user, csrf: ctx.session.csrf }), 'Preview');
   });
 
   function ownedPost(ctx, id) {
@@ -264,15 +311,15 @@ function createApp(overrides = {}) {
   add('GET', /^\/posts\/(\d{1,9})\/edit$/, 'user', (ctx, [id]) => {
     const post = ownedPost(ctx, id);
     render(ctx, 200, views.postForm({
-      mode: 'edit', post, values: { title: post.title, body: post.body }, csrf: ctx.session.csrf,
-    }), 'Edit post');
+      mode: 'edit', post, values: { title: post.title, body: post.body, category: post.category }, csrf: ctx.session.csrf,
+    }), 'Edit article');
   });
 
   add('POST', /^\/posts\/(\d{1,9})$/, 'user', (ctx, [id]) => {
     const post = ownedPost(ctx, id);
     const { values, errors } = v.validatePost(ctx.form);
     if (errors) {
-      return render(ctx, 422, views.postForm({ mode: 'edit', post, values, errors, csrf: ctx.session.csrf }), 'Edit post');
+      return render(ctx, 422, views.postForm({ mode: 'edit', post, values, errors, csrf: ctx.session.csrf }), 'Edit article');
     }
     store.updatePost(post.id, values);
     return flashRedirect(ctx, `/posts/${post.id}`, 'ok', 'Changes saved.');
@@ -292,7 +339,7 @@ function createApp(overrides = {}) {
   add('POST', /^\/posts\/(\d{1,9})\/delete$/, 'user', (ctx, [id]) => {
     const post = ownedPost(ctx, id);
     store.deletePost(post.id);
-    flashRedirect(ctx, '/', 'ok', 'Post deleted.');
+    flashRedirect(ctx, '/', 'ok', 'Article deleted.');
   });
 
   // ---- own account

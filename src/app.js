@@ -97,6 +97,14 @@ function checkOrigin(req) {
 
 const canModify = (user, post) => Boolean(user) && (user.role === 'admin' || user.id === post.author_id);
 
+function navCurrent(pathname) {
+  if (pathname === '/') return 'articles';
+  if (pathname === '/about') return 'about';
+  if (pathname === '/posts/new') return 'write';
+  if (pathname.startsWith('/admin/users')) return 'users';
+  return '';
+}
+
 // -------------------------------------------------------------------- app --
 
 function createApp(overrides = {}) {
@@ -104,6 +112,13 @@ function createApp(overrides = {}) {
   const store = createStore(config.dbFile);
 
   const css = fs.readFileSync(path.join(__dirname, '..', 'public', 'style.css'));
+  // Fonts are served from an exact whitelist (no directory access), long-cached.
+  const FONT_FILES = {
+    '/static/fonts/playfair-display.woff': 'playfair-display.woff',
+    '/static/fonts/playfair-display-italic.woff': 'playfair-display-italic.woff',
+  };
+  const fonts = Object.fromEntries(Object.entries(FONT_FILES).map(([url, file]) =>
+    [url, fs.readFileSync(path.join(__dirname, '..', 'public', 'fonts', file))]));
   const globalLimiter = new sec.RateLimiter({ windowMs: 60 * 1000, max: config.globalRateMax });
   const loginLimiter = new sec.RateLimiter({ windowMs: 15 * 60 * 1000, max: config.loginMaxAttempts });
 
@@ -138,6 +153,7 @@ function createApp(overrides = {}) {
       flash,
       title,
       main,
+      current: navCurrent(ctx.url ? ctx.url.pathname : ''),
       ...extra,
     });
     send(ctx, status, page.value, 'text/html; charset=utf-8', { 'Cache-Control': 'no-store' });
@@ -482,6 +498,9 @@ function createApp(overrides = {}) {
     // Static files: an exact whitelist, so there is no way to walk the filesystem.
     if (isRead && pathname === '/static/style.css') {
       return send(ctx, 200, css, 'text/css; charset=utf-8', { 'Cache-Control': 'public, max-age=3600' });
+    }
+    if (isRead && fonts[pathname]) {
+      return send(ctx, 200, fonts[pathname], 'font/woff', { 'Cache-Control': 'public, max-age=31536000, immutable' });
     }
     if (isRead && pathname === '/favicon.svg') {
       return send(ctx, 200, FAVICON, 'image/svg+xml', { 'Cache-Control': 'public, max-age=86400' });

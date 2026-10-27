@@ -12,48 +12,89 @@ function fmtDate(sqlDate) {
   const d = new Date(`${String(sqlDate).replace(' ', 'T')}Z`);
   if (Number.isNaN(d.getTime())) return '';
   return d.toLocaleDateString('en-GB', {
-    day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC',
+    day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC',
   });
 }
 
 const isoDay = (sqlDate) => String(sqlDate).slice(0, 10);
 
+function fmtLong(date) {
+  return date.toLocaleDateString('en-GB', {
+    weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC',
+  });
+}
+
 function fieldError(id, message) {
   return message ? html`<p class="field-error" id="${id}">${message}</p>` : '';
 }
 
-// ---------------------------------------------------------------- layout --
-
-const NIB = html`<svg class="nib" viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" focusable="false"><path d="M4 21l2.2-6.6L16.5 4a2.1 2.1 0 013 3L9.1 17.6z" fill="currentColor"/><path d="M6.2 14.4l3.4 3.4" stroke="var(--bg)" stroke-width="1.4"/></svg>`;
+const DESCRIPTIONS = {
+  'Security': 'How attacks work, and how to stop them.',
+  'Web Development': 'Practical engineering notes from the workbench.',
+  'Internship Diary': 'A task-by-task record of building this site.',
+  'Ideas': 'Shorter essays and open questions.',
+};
 
 const catHref = (c) => `/?category=${encodeURIComponent(c)}#latest`;
 
-function layout({ siteName, user, csrf, flash, title, description, ogType, main, progress }) {
+// The wordmark is pure typography: spaced capitals with a small gold diamond.
+const wordmark = (siteName) => {
+  const name = siteName.toUpperCase();
+  const mid = name === 'INKWELL' ? 3 : Math.ceil(name.length / 2);
+  return html`<span class="wm">${name.slice(0, mid)}<i class="wm-dot" aria-hidden="true"></i>${name.slice(mid)}</span>`;
+};
+
+// ---------------------------------------------------------------- layout --
+
+function searchForm({ q, category, id = 'q', label = 'Search the archive' }) {
+  return html`
+    <form class="search" role="search" method="get" action="/#latest">
+      <label class="sr-only" for="${id}">Search articles</label>
+      <input id="${id}" name="q" type="search" value="${q}" maxlength="${LIMITS.searchMax}"
+             placeholder="${label}" autocomplete="off">
+      ${category ? html`<input type="hidden" name="category" value="${category}">` : ''}
+      <button type="submit" aria-label="Search"><svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true" focusable="false"><circle cx="8.5" cy="8.5" r="5.8" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M13 13l4.5 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg></button>
+    </form>`;
+}
+
+function layout({ siteName, user, csrf, flash, title, description, ogType, main, progress, current }) {
   const flashHtml = flash
     ? html`<div class="flash ${flash.type === 'error' ? 'flash-error' : 'flash-ok'}" role="status">${flash.text}</div>`
     : '';
 
-  const account = user
+  const cur = (name) => (current === name ? raw('aria-current="page"') : '');
+
+  const left = html`
+    <li><a href="/" ${cur('articles')}>Articles</a></li>
+    <li><a href="/about" ${cur('about')}>About</a></li>`;
+
+  const logout = html`
+    <li>
+      <form method="post" action="/logout" class="inline">
+        ${csrfField(csrf)}
+        <button type="submit" class="linklike">Log out</button>
+      </form>
+    </li>`;
+
+  const right = user
     ? html`
+        <li><a href="/posts/new" ${cur('write')}>Write</a></li>
+        ${user.role === 'admin' ? html`<li><a href="/admin/users" ${cur('users')}>Users</a></li>` : ''}
         <li><a href="/account">${user.username}</a> <span class="badge">${user.role}</span></li>
-        <li>
-          <form method="post" action="/logout" class="inline">
-            ${csrfField(csrf)}
-            <button type="submit" class="linklike">Log out</button>
-          </form>
-        </li>`
+        ${logout}`
     : html`<li><a href="/login">Log in</a></li>`;
 
-  const pageTitle = title ? `${title} · ${siteName}` : `${siteName}: notes on building a safer web`;
+  const pageTitle = title ? `${title} · ${siteName}` : `${siteName}: notes on building software that stays secure`;
   const desc = description || `${siteName} is an independent publication about secure web development, written and edited by its own contributors.`;
 
   return html`<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
-  <meta name="theme-color" content="#14161c">
+  <meta name="theme-color" content="#f6f1e7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0f0e0b" media="(prefers-color-scheme: dark)">
   <title>${pageTitle}</title>
   <meta name="description" content="${desc}">
   <meta property="og:site_name" content="${siteName}">
@@ -64,21 +105,25 @@ function layout({ siteName, user, csrf, flash, title, description, ogType, main,
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/static/style.css">
 </head>
-<body>
+<body id="top">
   <a class="skip" href="#main">Skip to content</a>
   ${progress ? html`<div class="read-progress" aria-hidden="true"></div>` : ''}
+  <div class="dateline"><p>${fmtLong(new Date())}</p><p>An independent publication</p></div>
   <header class="site-header">
     <div class="bar">
-      <a class="brand" href="/" aria-label="${siteName} home">${NIB}<span class="wordmark">${siteName.toUpperCase()}</span></a>
-      <nav aria-label="Main">
-        <ul>
-          <li><a href="/">Articles</a></li>
-          <li><a href="/about">About</a></li>
-          ${user ? html`<li><a href="/posts/new">Write</a></li>` : ''}
-          ${user && user.role === 'admin' ? html`<li><a href="/admin/users">Users</a></li>` : ''}
-          ${account}
-        </ul>
-      </nav>
+      <details class="menu">
+        <summary aria-label="Menu"><span class="menu-icon" aria-hidden="true"></span><span class="menu-label">Menu</span></summary>
+        <div class="menu-panel">
+          ${searchForm({ q: '', category: '', id: 'q-menu', label: 'Search articles' })}
+          <nav aria-label="Menu">
+            <ul>${left}${right}</ul>
+          </nav>
+        </div>
+      </details>
+      <nav class="nav-left" aria-label="Main"><ul>${left}</ul></nav>
+      <a class="brand" href="/" aria-label="${siteName} home">${wordmark(siteName)}</a>
+      <nav class="nav-right" aria-label="Account"><ul>${right}</ul></nav>
+      <a class="bar-cta" href="${user ? '/posts/new' : '/login'}">${user ? 'Write' : 'Log in'}</a>
     </div>
   </header>
   <main id="main">
@@ -86,25 +131,35 @@ function layout({ siteName, user, csrf, flash, title, description, ogType, main,
     ${main}
   </main>
   <footer class="site-footer">
-    <div class="footer-grid">
-      <div class="footer-brand">
-        <p class="wordmark">${siteName.toUpperCase()}</p>
-        <p class="muted">An independent publication on building software that stays secure.</p>
+    <div class="footer-inner">
+      <a class="footer-mark" href="/" aria-label="${siteName} home">${wordmark(siteName)}</a>
+      <p class="footer-tag">An independent publication on building software that stays secure.</p>
+      <div class="footer-grid">
+        <nav aria-label="Topics">
+          <h2>Topics</h2>
+          <ul>${CATEGORIES.map((c) => html`<li><a href="${catHref(c)}">${c}</a></li>`)}</ul>
+        </nav>
+        <nav aria-label="Footer">
+          <h2>${siteName}</h2>
+          <ul>
+            <li><a href="/">All articles</a></li>
+            <li><a href="/about">About</a></li>
+            <li><a href="/about#colophon">Colophon</a></li>
+          </ul>
+        </nav>
+        <nav aria-label="Contributors">
+          <h2>Contributors</h2>
+          <ul>
+            <li><a href="${user ? '/posts/new' : '/login'}">${user ? 'Write an article' : 'Log in'}</a></li>
+            ${user ? html`<li><a href="/account">Your account</a></li>` : ''}
+          </ul>
+        </nav>
       </div>
-      <nav aria-label="Topics">
-        <h2>Topics</h2>
-        <ul>${CATEGORIES.map((c) => html`<li><a href="${catHref(c)}">${c}</a></li>`)}</ul>
-      </nav>
-      <nav aria-label="Footer">
-        <h2>${siteName}</h2>
-        <ul>
-          <li><a href="/">All articles</a></li>
-          <li><a href="/about">About</a></li>
-          <li><a href="${user ? '/posts/new' : '/login'}">${user ? 'Write an article' : 'Contributor log in'}</a></li>
-        </ul>
-      </nav>
+      <div class="legal">
+        <p>© ${new Date().getUTCFullYear()} ${siteName}. All rights reserved.</p>
+        <p><a href="#top">Back to top ↑</a></p>
+      </div>
     </div>
-    <p class="legal">© ${new Date().getUTCFullYear()} ${siteName}. All rights reserved.</p>
   </footer>
 </body>
 </html>`;
@@ -113,7 +168,7 @@ function layout({ siteName, user, csrf, flash, title, description, ogType, main,
 // ----------------------------------------------------------------- home --
 
 const cover = (p, eager = false) => html`
-  <img src="/covers/${p.id}.svg" alt="" width="800" height="500"
+  <img src="/covers/${p.id}.svg" alt="" width="1000" height="1000"
        ${eager ? raw('loading="eager" fetchpriority="high"') : raw('loading="lazy"')} decoding="async">`;
 
 const metaLine = (p) => html`
@@ -123,32 +178,60 @@ const metaLine = (p) => html`
     <span>${readingMinutes(p.body)} min read</span>
   </p>`;
 
-function card(p) {
+// One story, several shapes: lead, side, tall (portrait) and wide.
+function story(p, variant) {
+  const lengths = { lead: 210, tall: 130, wide: 150 };
   return html`
-    <li class="card">
-      <article>
-        <a class="card-cover" href="/posts/${p.id}" tabindex="-1" aria-hidden="true">${cover(p)}</a>
-        <div class="card-body">
-          <p class="eyebrow"><a href="${catHref(p.category)}">${p.category}</a></p>
-          <h3><a href="/posts/${p.id}">${p.title}</a></h3>
-          <p class="excerpt">${plainExcerpt(p.body)}</p>
-          ${metaLine(p)}
-        </div>
-      </article>
-    </li>`;
+    <article class="story story-${variant}">
+      <a class="story-media" href="/posts/${p.id}" tabindex="-1" aria-hidden="true">${cover(p)}</a>
+      <div class="story-text">
+        <p class="eyebrow"><a href="${catHref(p.category)}">${p.category}</a></p>
+        <h3 class="story-title"><a href="/posts/${p.id}">${p.title}</a></h3>
+        ${lengths[variant] ? html`<p class="excerpt">${plainExcerpt(p.body, lengths[variant])}</p>` : ''}
+        ${metaLine(p)}
+      </div>
+    </article>`;
 }
 
-function featured(p) {
+// An asymmetric arrangement: one large story, a stack of two beside it, then a row
+// of portrait stories. Not every card is the same shape.
+function editorial(posts) {
+  if (!posts.length) return '';
+  const [lead, ...rest] = posts;
+  const stack = rest.slice(0, 2);
+  const grid = rest.slice(2);
+  const shape = (i) => (grid.length === 2 ? (i === 0 ? 'tall' : 'wide') : grid.length === 1 ? 'wide' : 'tall');
   return html`
-    <section class="featured" aria-labelledby="featured-title">
-      <a class="featured-cover" href="/posts/${p.id}" tabindex="-1" aria-hidden="true">${cover(p, true)}</a>
-      <div class="featured-body">
-        <p class="eyebrow">Featured · <a href="${catHref(p.category)}">${p.category}</a></p>
-        <h2 id="featured-title"><a href="/posts/${p.id}">${p.title}</a></h2>
-        <p class="lead">${plainExcerpt(p.body, 230)}</p>
-        ${metaLine(p)}
-        <p><a class="button" href="/posts/${p.id}">Read the article</a></p>
+    <div class="editorial">
+      <div class="ed-top ${stack.length ? '' : 'solo'}">
+        ${story(lead, 'lead')}
+        ${stack.length ? html`<div class="ed-stack">${stack.map((p) => story(p, 'side'))}</div>` : ''}
       </div>
+      ${grid.length ? html`<div class="ed-grid n${Math.min(grid.length, 3)}">${grid.map((p, i) => story(p, shape(i)))}</div>` : ''}
+    </div>`;
+}
+
+function heroFeature(p, siteName) {
+  return html`
+    <section class="hero" aria-label="Introduction and featured story">
+      <div class="hero-text">
+        <p class="kicker">The latest edition</p>
+        <h1>Notes on building software that <em>stays secure.</em></h1>
+        <p class="lead">${siteName} publishes clear, practical writing on web security, engineering and the craft of learning to build.</p>
+        <p class="hero-actions">
+          <a class="button" href="#latest">Explore articles</a>
+          <a class="text-link" href="/about">About ${siteName}</a>
+        </p>
+      </div>
+      ${p ? html`
+        <article class="hero-feature">
+          <div class="hero-frame"><a class="hero-media" href="/posts/${p.id}" tabindex="-1" aria-hidden="true">${cover(p, true)}</a></div>
+          <div class="hero-caption">
+            <p class="eyebrow">Featured story · <a href="${catHref(p.category)}">${p.category}</a></p>
+            <h2><a href="/posts/${p.id}">${p.title}</a></h2>
+            ${metaLine(p)}
+          </div>
+        </article>` : ''}
     </section>`;
 }
 
@@ -188,25 +271,35 @@ function pagination({ page, pages, q, category }) {
     </nav>`;
 }
 
-function topicNav({ counts, category, total }) {
+function topicTabs({ counts, category }) {
   const all = Object.values(counts).reduce((a, b) => a + b, 0);
   return html`
-    <nav class="topics" aria-label="Browse by topic">
+    <nav class="topics" aria-label="Filter by topic">
       <a href="/#latest" ${!category ? raw('aria-current="page"') : ''}>All <span>${all}</span></a>
       ${CATEGORIES.map((c) => html`
         <a href="${catHref(c)}" ${category === c ? raw('aria-current="page"') : ''}>${c} <span>${counts[c] || 0}</span></a>`)}
     </nav>`;
 }
 
-function searchForm({ q, category, id = 'q' }) {
+// The "desks": a typographic index of the publication's topics.
+function topicIndex({ counts }) {
   return html`
-    <form class="search" role="search" method="get" action="/#latest">
-      <label class="sr-only" for="${id}">Search articles</label>
-      <input id="${id}" name="q" type="search" value="${q}" maxlength="${LIMITS.searchMax}"
-             placeholder="Search articles…" autocomplete="off">
-      ${category ? html`<input type="hidden" name="category" value="${category}">` : ''}
-      <button type="submit">Search</button>
-    </form>`;
+    <section class="desks" id="topics" aria-labelledby="desks-title">
+      <header class="section-head">
+        <h2 id="desks-title">Browse by <em>topic</em></h2>
+      </header>
+      <ol>
+        ${CATEGORIES.map((c, i) => html`
+          <li>
+            <a href="${catHref(c)}">
+              <span class="desk-no">${String(i + 1).padStart(2, '0')}</span>
+              <span class="desk-name">${c}</span>
+              <span class="desk-desc">${DESCRIPTIONS[c]}</span>
+              <span class="desk-count">${counts[c] || 0} ${(counts[c] || 0) === 1 ? 'article' : 'articles'} <span aria-hidden="true">→</span></span>
+            </a>
+          </li>`)}
+      </ol>
+    </section>`;
 }
 
 function home({ posts, q, category, page, pages, total, counts, siteName }) {
@@ -220,33 +313,24 @@ function home({ posts, q, category, page, pages, total, counts, siteName }) {
     : html`${total} ${noun}`;
 
   return html`
-    ${filtering ? '' : html`
-      <section class="hero">
-        <p class="eyebrow">An independent publication</p>
-        <h1>Notes on building software that stays secure.</h1>
-        <p class="lead">${siteName} publishes clear, practical writing on web security, engineering and the craft of learning to build.</p>
-        <p class="hero-actions">
-          <a class="button" href="#latest">Explore articles</a>
-          <a class="button secondary" href="/about">About ${siteName}</a>
-        </p>
-      </section>
-      ${lead ? featured(lead) : ''}`}
+    ${filtering ? '' : heroFeature(lead, siteName)}
     <section id="latest" class="latest" aria-labelledby="latest-title">
-      <div class="section-head">
-        <h2 id="latest-title">${filtering ? (q ? 'Search results' : category) : 'Latest articles'}</h2>
+      <header class="section-head">
+        <h2 id="latest-title">${filtering ? (q ? html`Search <em>results</em>` : category) : html`Latest <em>stories</em>`}</h2>
         ${searchForm({ q, category })}
-      </div>
-      ${topicNav({ counts, category, total })}
+      </header>
+      ${topicTabs({ counts, category })}
       <p class="muted count" aria-live="polite">${summary}</p>
       ${rest.length
-        ? html`<ul class="posts">${rest.map(card)}</ul>`
+        ? editorial(rest)
         : (lead ? '' : html`
             <div class="empty">
               <p>${filtering ? 'No articles match that search.' : 'No articles have been published yet.'}</p>
               ${filtering ? html`<p><a class="button secondary" href="/#latest">Show all articles</a></p>` : ''}
             </div>`)}
       ${pagination({ page, pages, q, category })}
-    </section>`;
+    </section>
+    ${filtering ? '' : topicIndex({ counts })}`;
 }
 
 // ------------------------------------------------------------ post pages --
@@ -254,25 +338,30 @@ function home({ posts, q, category, page, pages, total, counts, siteName }) {
 function articleBody({ post, author, createdAt, updatedAt, preview = false }) {
   const { html: bodyHtml, toc } = renderBody(post.body);
   const edited = !preview && updatedAt && updatedAt !== createdAt;
+  const showToc = toc.length >= 3;
   return html`
     <article class="article">
       <header class="article-head">
-        <p class="eyebrow">${preview ? html`${post.category}` : html`<a href="${catHref(post.category)}">${post.category}</a>`}</p>
+        <p class="eyebrow eyebrow-rule">${preview ? html`${post.category}` : html`<a href="${catHref(post.category)}">${post.category}</a>`}</p>
         <h1>${post.title}</h1>
-        <p class="meta">
-          <span>By ${author}</span>
+        <p class="standfirst">${plainExcerpt(post.body, 190)}</p>
+        <p class="byline">
+          <span>By <strong>${author}</strong></span>
           <time datetime="${isoDay(createdAt)}">${fmtDate(createdAt)}</time>
           <span>${readingMinutes(post.body)} min read</span>
           ${edited ? html`<span>Updated ${fmtDate(updatedAt)}</span>` : ''}
         </p>
       </header>
       ${preview ? '' : html`<figure class="article-cover">${cover(post, true)}</figure>`}
-      ${toc.length >= 3 ? html`
-        <nav class="toc" aria-label="In this article">
-          <h2>In this article</h2>
-          <ol>${toc.map((t) => html`<li><a href="#${t.id}">${t.text}</a></li>`)}</ol>
-        </nav>` : ''}
-      <div class="prose">${bodyHtml}</div>
+      <div class="article-grid ${showToc ? 'has-toc' : ''}">
+        ${showToc ? html`
+          <nav class="toc" aria-label="In this article">
+            <h2>In this article</h2>
+            <ol>${toc.map((t) => html`<li><a href="#${t.id}">${t.text}</a></li>`)}</ol>
+          </nav>` : ''}
+        <div class="prose">${bodyHtml}</div>
+      </div>
+      <p class="end-mark" aria-hidden="true"><i></i></p>
     </article>`;
 }
 
@@ -287,8 +376,8 @@ function postPage({ post, canModify, related = [] }) {
     </p>
     ${related.length ? html`
       <section class="related" aria-labelledby="related-title">
-        <h2 id="related-title">Keep reading</h2>
-        <ul class="posts">${related.map(card)}</ul>
+        <header class="section-head"><h2 id="related-title">Continue <em>reading</em></h2></header>
+        <div class="ed-grid n${related.length}">${related.map((p) => story(p, 'tall'))}</div>
       </section>` : ''}`;
 }
 
@@ -297,8 +386,10 @@ function postForm({ mode, post, values, errors = {}, csrf }) {
   const action = editing ? `/posts/${post.id}` : '/posts';
   return html`
     <section class="editor">
-      <p class="eyebrow">${editing ? 'Editing' : 'New article'}</p>
-      <h1>${editing ? 'Edit article' : 'Write an article'}</h1>
+      <div class="page-head">
+        <p class="eyebrow">${editing ? 'Editing' : 'New article'}</p>
+        <h1>${editing ? 'Edit the article' : 'Write an article'}</h1>
+      </div>
       ${errors && Object.keys(errors).length ? html`
         <div class="flash flash-error" role="alert">Please fix the highlighted fields and try again.</div>` : ''}
       <form method="post" action="${action}" class="stack" novalidate>
@@ -360,32 +451,46 @@ function about({ siteName }) {
   return html`
     <article class="article about">
       <header class="article-head">
-        <p class="eyebrow">About</p>
-        <h1>A small publication with a careful eye for detail.</h1>
+        <p class="eyebrow eyebrow-rule">About</p>
+        <h1>A small publication with a careful eye for <em>detail.</em></h1>
+        <p class="standfirst">${siteName} is an independent publication about building software that stays secure. We favour plain language, working examples and honest accounts of what went wrong as well as what went right.</p>
       </header>
-      <div class="prose">
-        <p>${siteName} is an independent publication about building software that stays secure. We favour plain language, working examples and honest accounts of what went wrong as well as what went right.</p>
-        <h2>What you will find here</h2>
-        <ul>
-          <li><strong>Security:</strong> how real attacks work and how to stop them.</li>
-          <li><strong>Web Development:</strong> practical engineering notes.</li>
-          <li><strong>Internship Diary:</strong> a task-by-task record of building this site.</li>
-          <li><strong>Ideas:</strong> shorter essays and open questions.</li>
-        </ul>
-        <h2>How ${siteName} is built</h2>
-        <p>The site is written by Ishan Wankhede as a web development internship project. Passwords are stored only as salted hashes, every form is protected against forgery, all text is escaped before it is shown, and permissions are checked on the server for every request. Contributors have either an editor role (write and manage their own articles) or an admin role (manage all articles and users).</p>
-        <h2>Write for ${siteName}</h2>
-        <p>Contributor accounts are created by an administrator. If you have one, <a href="/login">log in</a> to start writing.</p>
+      <div class="article-grid">
+        <div class="prose">
+          <h2>What you will find here</h2>
+          <p>Four desks, each with its own voice. Browse them below, or read everything in the order it was written.</p>
+          <blockquote><p>Treat every input as hostile, and every user as someone you want to keep.</p></blockquote>
+          <h2 id="colophon">Colophon</h2>
+          <p>The site is written by Ishan Wankhede as a web development internship project. Passwords are stored only as salted hashes, every form is protected against forgery, all text is escaped before it is shown, and permissions are checked on the server for every request. Contributors have either an editor role (write and manage their own articles) or an admin role (manage all articles and users).</p>
+          <p>Headlines are set in Playfair Display, used under the SIL Open Font License. Cover art is generated for each article.</p>
+          <h2>Write for ${siteName}</h2>
+          <p>Contributor accounts are created by an administrator. If you have one, <a href="/login">log in</a> to start writing.</p>
+        </div>
       </div>
+      <p class="end-mark" aria-hidden="true"><i></i></p>
       <p class="actions article-actions"><a class="button" href="/#latest">Explore articles</a></p>
-    </article>`;
+    </article>
+    <section class="desks about-desks" aria-label="The four desks">
+      <ol>
+        ${CATEGORIES.map((c, i) => html`
+          <li>
+            <a href="${catHref(c)}">
+              <span class="desk-no">${String(i + 1).padStart(2, '0')}</span>
+              <span class="desk-name">${c}</span>
+              <span class="desk-desc">${DESCRIPTIONS[c]}</span>
+              <span class="desk-count">Read the desk <span aria-hidden="true">→</span></span>
+            </a>
+          </li>`)}
+      </ol>
+    </section>`;
 }
 
 function confirmDelete({ heading, detail, action, cancelHref, csrf }) {
   return html`
     <section class="narrow">
+      <p class="eyebrow">Please confirm</p>
       <h1>${heading}</h1>
-      <p>${detail}</p>
+      <p class="lead-sm">${detail}</p>
       <form method="post" action="${action}" class="actions">
         ${csrfField(csrf)}
         <button type="submit" class="danger">Yes, delete</button>
@@ -399,6 +504,7 @@ function confirmDelete({ heading, detail, action, cancelHref, csrf }) {
 function login({ csrf, error, username = '' }) {
   return html`
     <section class="narrow">
+      <p class="eyebrow">Contributors</p>
       <h1>Log in</h1>
       ${error ? html`<div class="flash flash-error" role="alert">${error}</div>` : ''}
       <form method="post" action="/login" class="stack">
@@ -421,6 +527,7 @@ function login({ csrf, error, username = '' }) {
 function account({ user, csrf, errors = {} }) {
   return html`
     <section class="narrow">
+      <p class="eyebrow">Account</p>
       <h1>Your account</h1>
       <p class="muted">Signed in as <strong>${user.username}</strong> <span class="badge">${user.role}</span></p>
       <h2>Change password</h2>
@@ -452,7 +559,10 @@ function account({ user, csrf, errors = {} }) {
 
 function adminUsers({ users, me, csrf, errors = {}, values = {} }) {
   return html`
-    <h1>Users</h1>
+    <div class="page-head">
+      <p class="eyebrow">Administration</p>
+      <h1>Users</h1>
+    </div>
     <section class="panel">
       <h2>Add a user</h2>
       <form method="post" action="/admin/users" class="stack">
@@ -520,11 +630,12 @@ function adminUsers({ users, me, csrf, errors = {}, values = {} }) {
 
 function errorPage({ status, message }) {
   return html`
-    <section class="narrow error">
-      <p class="error-code">${status}</p>
+    <section class="error">
+      <p class="error-code" aria-hidden="true">${status}</p>
+      <p class="eyebrow eyebrow-rule">${status === 404 ? 'Not found' : 'Something went wrong'}</p>
       <h1>${message}</h1>
       <p class="muted">${status === 404 ? 'The page may have moved, or the address may be mistyped.' : 'Please try again in a moment.'}</p>
-      ${status === 404 ? searchForm({ q: '', category: '' , id: 'q-404' }) : ''}
+      ${status === 404 ? searchForm({ q: '', category: '', id: 'q-404', label: 'Search the archive' }) : ''}
       <p class="actions"><a class="button" href="/">Back to the front page</a></p>
     </section>`;
 }

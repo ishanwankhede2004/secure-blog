@@ -94,12 +94,12 @@ class RateLimiter {
 
 // ---- HTTP security headers ---------------------------------------------------
 // The app uses no JavaScript and no third-party assets, so the CSP can be strict:
-// nothing may run or load except our own stylesheet and favicon.
+// nothing may run or load except our own stylesheet, images, fonts and favicon.
 
 function setSecurityHeaders(res, config) {
   res.setHeader(
     'Content-Security-Policy',
-    "default-src 'none'; style-src 'self'; img-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+    "default-src 'none'; style-src 'self'; img-src 'self'; font-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
   );
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'DENY');

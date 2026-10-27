@@ -108,7 +108,7 @@ function rawGet(base, path) {
 
 // Posts on the page: the featured article (front page only) plus the cards.
 const countCards = (text) =>
-  (text.match(/<li class="card">/g) || []).length + (text.match(/<section class="featured"/g) || []).length;
+  (text.match(/<article class="story /g) || []).length + (text.match(/<article class="hero-feature"/g) || []).length;
 
 // ------------------------------------------------------------------------ 1
 test('passwords are stored as salted scrypt hashes, never plain text', async () => {
@@ -389,12 +389,13 @@ test('mobile friendly: viewport meta tag and responsive stylesheet', async () =>
   const ctx = await boot();
   try {
     const c = new Client(ctx.base);
-    assert.match((await c.req('/')).text, /<meta name="viewport" content="width=device-width, initial-scale=1">/);
+    assert.match((await c.req('/')).text, /<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">/);
     const css = await c.req('/static/style.css');
     assert.equal(css.status, 200);
     assert.match(css.headers.get('content-type'), /text\/css/);
     assert.match(css.text, /@media \(min-width: 40rem\)/);
-    assert.match(css.text, /min-height: 44px/, 'touch targets are at least 44px');
+    assert.match(css.text, /@media \(prefers-reduced-motion: reduce\)/, 'motion is switched off for people who ask for that');
+    assert.match(css.text, /min-height: 48px/, 'touch targets are at least 44px (buttons and menu items use 48px)');
   } finally { await ctx.close(); }
 });
 
@@ -744,9 +745,9 @@ test('covers, About page, related articles and the custom 404', async () => {
     assert.match(about.text, /About/);
 
     const page = await c.req(`/posts/${a}`);
-    assert.match(page.text, /Keep reading/);
+    assert.match(page.text, /Continue <em>reading<\/em>/);
     assert.match(page.text, /Second security piece/);
-    assert.ok(!/<li class="card">[\s\S]*SECRET-TITLE-ONE[\s\S]*<\/li>/.test(page.text.split('Keep reading')[1] || ''), 'an article is not related to itself');
+    assert.ok(!/<article class="story[\s\S]*SECRET-TITLE-ONE/.test(page.text.split('Continue <em>reading</em>')[1] || ''), 'an article is not related to itself');
 
     const nf = await c.req('/no/such/page');
     assert.equal(nf.status, 404);

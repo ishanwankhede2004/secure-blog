@@ -62,7 +62,9 @@ function renderBody(body) {
 
 // Short plain-text summary for cards and meta descriptions: markers removed.
 function plainExcerpt(body, max = 170) {
-  const text = body
+  const blocks = String(body).split(/\n\s*\n/).map((b) => b.trim());
+  const firstProse = blocks.find((b) => b && !/^(##\s|>|[-*]\s)/.test(b));
+  const text = (firstProse || body)
     .replace(/^##\s+/gm, '')
     .replace(/^>\s?/gm, '')
     .replace(/^[-*]\s+/gm, '')

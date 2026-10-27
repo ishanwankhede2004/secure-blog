@@ -135,3 +135,7 @@ test/app.test.js     end-to-end tests
 3. **Login, CRUD and roles:** hashed-password login, create/edit/delete, admin and editor permissions.
 4. **Security:** validation, escaping, CSRF, rate limiting, headers (table above).
 5. **Final build and testing:** `npm test`, seed data, deployment.
+
+## Typography and design notes
+
+Headlines use **Playfair Display** (SIL Open Font License, see `public/fonts/OFL.txt`), self-hosted as WOFF and served from `/static/fonts/` so the strict Content-Security-Policy (`font-src 'self'`) needs no external requests. If the font fails to load, the stack falls back to Didot / Georgia. Article cover art is generated SVG (no photographs are bundled). Scroll-driven effects (reveals, shrinking header, reading progress) use CSS only and degrade to a static page in browsers without support or with reduced-motion on.

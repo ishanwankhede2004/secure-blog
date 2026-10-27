@@ -77,7 +77,7 @@ async function waitUntilAwake() {
 
 // Posts on a page: the featured article (front page only) plus the cards.
 const countCards = (text) =>
-  (text.match(/<li class="card">/g) || []).length + (text.match(/<section class="featured"/g) || []).length;
+  (text.match(/<article class="story /g) || []).length + (text.match(/<article class="hero-feature"/g) || []).length;
 const postId = (location) => (location || '').split('/').pop();
 
 async function main() {
